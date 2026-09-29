@@ -1,6 +1,6 @@
 # Satellite Image Super-Resolution for Air Pollution Monitoring
 
-Semester project — a scoped-down, computer-vision-focused piece of a larger physics-informed machine learning (PIML) research effort led by [Professor Name], on estimating high-resolution satellite-based PM2.5 pollution maps.
+Semester project — a scoped-down, computer-vision-focused piece of a larger physics-informed machine learning (PIML), on estimating high-resolution satellite-based PM2.5 pollution maps.
 
 ## The idea, in short
 
@@ -8,8 +8,8 @@ Satellite instruments that measure air pollution (like PM2.5) only give us blurr
 
 The bigger research project (see `docs/proposal/`) eventually wants to make this SR model "physics-informed" — teaching it the actual laws of how pollution moves through the atmosphere. That part requires atmospheric transport data we don't have yet. So:
 
-- **Phase 1 (this semester, this repo's current scope):** build and evaluate a plain data-driven SR model. No physics/chemistry.
-- **Phase 2 (next 1–2 months, after this semester):** add physics-informed constraints (PDE-based transport equations) once we get the required data from the environmental science department.
+- **Phase 1 :** build and evaluate a plain data-driven SR model. No physics/chemistry.
+- **Phase 2 :** add physics-informed constraints (PDE-based transport equations) once we get the required.
 
 ## Pipeline (Phase 1)
 
@@ -54,4 +54,4 @@ See `docs/proposal/` for the full proposal, timeline, and task distribution.
 
 ## Status
 
-🚧 Phase 1 in progress.
+Phase 1 in progress.
