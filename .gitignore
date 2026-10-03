@@ -1,0 +1,15 @@
+# Local data (large; never committed)
+data/*
+!data/.gitkeep
+*.hdf
+*.npz
+*.npy
+
+# Secrets
+.env
+
+# Python / training artifacts
+__pycache__/
+*.pyc
+checkpoints/
+runs/

@@ -1,0 +1,11 @@
+earthaccess
+pyhdf
+numpy
+pandas
+requests
+python-dotenv
+torch
+scikit-image
+matplotlib
+tqdm
+timm
