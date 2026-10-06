@@ -1,0 +1,115 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc}
+\usepackage{tabularx}
+\usepackage{float}
+\begin{document}
+\title{Uncertainty-Aware Super-Resolution of Satellite Aerosol Data for Air Pollution Mapping}
+\author{\IEEEauthorblockN{Ryan Seidel and Rency Ajit Kansagra}
+\IEEEauthorblockA{CSE 6367 Computer Vision, Instructor: Dr.\ Diego Patino\\
+Department of Computer Science and Engineering, University of Texas at Arlington}}
+\maketitle
+\begin{abstract}
+Air pollution over large areas is often measured using satellites. Unfortunately, however, satellite images are often blurry when used on a scale that is relevant in a city, like an isolated highway. In the present project, deep learning super-resolution (SR) is used to sharpen satellite aerosol optical depth (AOD) maps over the Dallas--Fort Worth (DFW) area. Besides the sharp map, the model will also output a confidence map and we will force the sharp AOD to average back to the coarse satellite input so the extra detail cannot drift too far from what was observed. We will test against held-out 1\,km MAIAC maps and EPA ground monitors. 
+\end{abstract}
+\begin{IEEEkeywords}
+super-resolution, remote sensing, aerosol optical depth, PM$_{2.5}$, uncertainty
+\end{IEEEkeywords}
+\section{Problem Description}
+\subsection{Motivation}
+There are fine particles in the air, too small for the human eye to see, called PM$_{2.5}$, which are considered one of the biggest environmental health risks. Depending on the environment, the levels can vary a lot within a few blocks, and busy roads are a common hotspot. Although the Environmental Protection Agency (EPA) has ground monitors that measure PM$_{2.5}$ accurately, there are only a limited number of them, so most neighborhoods are not directly measured. Satellites are a great solution to this problem. Satellite sensors can measure aerosol optical depth (AOD), which shows how much the particles in the air block sunlight. AOD is already one of the main measurements used to estimate PM$_{2.5}$ across the U.S.~\cite{di2019ensemble}. The problem is resolution. Even the MAIAC product, one of the sharpest at 1\,km per pixel~\cite{lyapustin2018maiac}, is too coarse to show pollution along a single road. Many other aerosol products are several kilometers per pixel. Launching better satellites is expensive, so we want to see if computer vision can get more detail out of the data that already exists using super-resolution techniques. If the sharp map is going to be useful later, it also has to stay consistent with the coarse observation and show where it is unsure, not just look sharper.
+\begin{figure}[!b]
+\centering
+\definecolor{c1f}{HTML}{F1EFE8}\definecolor{c1d}{HTML}{8A887F}
+\definecolor{c2f}{HTML}{EEEDFE}\definecolor{c2d}{HTML}{7F77DD}
+\definecolor{c3f}{HTML}{E1F5EE}\definecolor{c3d}{HTML}{1D9E75}
+\definecolor{c4f}{HTML}{FAECE7}\definecolor{c4d}{HTML}{D85A30}
+\definecolor{c5f}{HTML}{FAEEDA}\definecolor{c5d}{HTML}{BA7517}
+\definecolor{c6f}{HTML}{E6F1FB}\definecolor{c6d}{HTML}{378ADD}
+\definecolor{c7f}{HTML}{EAF3DE}\definecolor{c7d}{HTML}{639922}
+\resizebox{0.62\columnwidth}{!}{%
+\begin{tikzpicture}[
+  node distance=0.45cm,
+  st/.style={draw=#1d, fill=#1f, rounded corners=3pt, align=center, minimum height=1.0cm, text width=4.4cm, line width=0.5pt},
+  sm/.style={draw=#1d, fill=#1f, rounded corners=3pt, align=center, minimum height=1.0cm, text width=3.5cm, line width=0.5pt},
+  ln/.style={draw=gray!70, line width=0.5pt}]
+\newcommand{\bx}[2]{{\small #1}\\[-1pt]{\scriptsize #2}}
+\node[st=c1] (a) {\bx{Low-res satellite images}{input data}};
+\node[st=c2, below=of a] (b) {\bx{Prepare data}{cut into small patches}};
+\node[st=c3, below=of b] (c) {\bx{AI model (SR)}{sharp map + confidence}};
+\node[sm=c4, below left=0.8cm and -1.3cm of c] (d) {\bx{Sharp image}{1\,km AOD}};
+\node[sm=c5, below right=0.8cm and -1.3cm of c] (e) {\bx{Confidence map}{how sure it is}};
+\node[st=c6, anchor=north] (f) at ($(c.south |- d.south)+(0,-0.75)$) {\bx{Compare to real image}{accuracy + re-average check}};
+\node[st=c7, below=of f] (g) {\bx{Improve the model}{adjust and retrain}};
+\draw[ln] (a) -- (b); \draw[ln] (b) -- (c);
+\draw[ln] (c.south) -- ++(0,-0.4) coordinate (s1);
+\draw[ln] (d.north |- s1) -- (e.north |- s1);
+\draw[ln] (d.north |- s1) -- (d.north); \draw[ln] (e.north |- s1) -- (e.north);
+\draw[ln] (d.south) -- ++(0,-0.35) coordinate (s2) -- (e.south |- s2) -- (e.south);
+\draw[ln] (f.north |- s2) -- (f.north);
+\draw[ln] (f) -- (g);
+\draw[ln, dashed, gray!60] (c.east) -- ($(e.east |- c.east)+(0.4,0)$) coordinate (r1)
+   -- (r1 |- g.east) node[pos=0.55, right, font=\scriptsize, text=gray!90!black]{$\circlearrowright$ retrain loop} -- (g.east);
+\end{tikzpicture}}
+\caption{Project pipeline. The sharp map is also averaged back to the coarse input.}
+\label{fig:pipeline}
+\end{figure}
+\subsection{Super-Resolution as a Computer Vision Problem}
+Super-resolution takes a low-resolution (LR) image and predicts what the high-resolution (HR) version looks like~\cite{wang2021survey}. Models have gone from CNNs to transformers like HAT~\cite{chen2023hat}. SR has also been used on satellite images, mostly Sentinel-2~\cite{lanaras2018dsen2,nguyenvi2025channel,massarelli2026interp}, and on multiple frames of the same area~\cite{deudon2020highresnet}; an overview is given in~\cite{digitalsense_blog}. While reading these papers, we noticed two issues that matter for our project. First, SR models can ``hallucinate,'' meaning they add details that look real but are not there, so it helps to keep the output consistent with the input~\cite{aybar2026sen2sr,massarelli2026interp}. Second, a better PSNR or SSIM score does not always mean the image performs better in practice~\cite{shermeyer2019effects}. Most existing satellite super-resolution research sharpens regular satellite photos, such as Sentinel-2 images, not measurement maps like AOD. For AOD we will put that consistency idea in the model: averaging the 1\,km output in $s\times s$ blocks should give back the coarse input.
+\subsection{Challenge}
+Sharpening an AOD map is more challenging than sharpening a normal photo. The model has to make an educated guess, since there is no one solution. Many different sharp maps can blur down to the same coarse map. AOD maps also do not have clear edges like buildings or cars, so methods that work on normal photos, such as gradient loss or Laplacian edge loss, may not help. Clouds block the satellite's view of the air below them, so AOD cannot be measured in those areas. This causes missing pixels in both the inputs and the targets. High-pollution days, such as wildfire smoke events, are less common than typical days, so they appear less often in the training data even though they matter most for health. Finally, for a truly coarse satellite image, there is no sharp ``answer key'' to check against.
+\subsection{Problem Statement}
+Given a low-resolution AOD map $\mathbf{x}\in\mathbb{R}^{H\times W}$ at $s\times$1\,km resolution ($s$ is the scale factor), we want to train a network
+\begin{equation}
+f_\theta:\ \mathbf{x}\ \mapsto\ \big(\hat{\mathbf{y}},\ \hat{\boldsymbol{\sigma}}^2\big),\qquad \hat{\mathbf{y}},\hat{\boldsymbol{\sigma}}^2\in\mathbb{R}^{sH\times sW},
+\end{equation}
+where $\hat{\mathbf{y}}$ is the sharpened 1\,km map and $\hat{\boldsymbol{\sigma}}^2$ is the confidence map (how unsure the model is at each pixel).We also want $\mathrm{AvgPool}_{s \times s}(\hat{\mathbf{y}}) \approx \mathbf{x}$. Since this could be used for public health, a pixel that is confidently wrong is worse than one that is just blurry, so the confidence map needs to actually match how accurate the model is. We plan to capture both noise in the data and uncertainty in the model itself~\cite{kendall2017uncertainties}, building on recent uncertainty-aware SR papers~\cite{he2025buff,zhang2025upsr,csillag2024trust}, which so far have only been tested on everyday photos. Our research questions are:
+\begin{itemize}
+\item \textbf{RQ1:} Can deep SR sharpen AOD maps (by $s\geq4$) better than simple interpolation?
+\item \textbf{RQ2:} If we force the sharp map to average back to the coarse AOD, do we reduce made-up detail without just smoothing the map again?
+\item \textbf{RQ3:} Is the confidence map reliable? That is, when the map reports that it is 80\% sure, is it correct about 80\% of the time?
+\item \textbf{RQ4:} Does the sharpened AOD correlate more strongly with ground PM$_{2.5}$ readings than the blurry version?
+\end{itemize}
+\subsection{How We Will Measure Success}
+For RQ1 we will compare our outputs to held-out 1\,km MAIAC maps using RMSE, PSNR, and SSIM, against bicubic interpolation and existing CNN and transformer models~\cite{chen2023hat,wang2021survey}. For RQ2 we will report $\|\mathrm{AvgPool}(\hat{\mathbf{y}})-\mathbf{x}\|$ with and without the constraint. For RQ3, we will check how often the true value falls inside the model's predicted range. For RQ4, we will look at $R^2$ between AOD at each EPA monitor and the PM$_{2.5}$ it measured. We also plan to show side-by-side examples so it is easy to see real detail versus guessing.
+\subsection{Scope}
+We will use public MAIAC AOD, including days with elevated AOD from smoke. We are sharpening AOD, not training a surface PM$_{2.5}$ model, and we are not implementing atmospheric transport PDEs. The physics we use this semester is the average-back-to-input constraint. RQ4 only tests whether sharper AOD lines up better with monitors~\cite{di2019ensemble}. The required scale factor is $s{=}4$ (4\,km to 1\,km). A road-density extra input, a smoke-day slice, or $s{=}10$ are stretch goals if the core results are already done.
+\section{Data Description}
+\subsection{Satellite Data: MAIAC AOD}
+Our project utilizes data from NASA's MCD19A2 dataset (Collection~6.1)~\cite{mcd19a2}, which provides daily air pollution measurements at 1\,km detail using the Terra (morning pass) and Aqua (afternoon pass) satellites~\cite{lyapustin2018maiac}. We are able to download it for free from NASA Earthdata as HDF files. NASA splits the world into square tiles about 1200\,km on each side, and DFW is located in tile \texttt{h09v05}. We use the 550\,nm AOD values along with their quality flags. As the data is stored as whole numbers, we will multiply values by 0.001 to get the actual AOD values. Understand, however, that pixels are left empty when clouds, snow, or very bright ground obstruct the satellite's view.
+\begin{table}[H]
+\caption{Summary of Data Sources}
+\label{tab:data}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.0}
+\begin{tabularx}{\columnwidth}{@{}l l l >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Dataset} & \textbf{Quantity} & \textbf{Resolution} & \textbf{Role} \\
+\midrule
+MAIAC MCD19A2 & AOD (550\,nm) & 1\,km, daily & HR target \\
+Degraded MAIAC & AOD (550\,nm) & $s$\,km ($s{=}4$) & LR input \\
+EPA AQS & Surface PM$_{2.5}$ & Point, hourly/daily & Validation \\
+\bottomrule
+\end{tabularx}
+\end{table}
+\subsection{Ground Data: EPA PM$_{2.5}$ Monitors}
+In order to compare our results with real-world data (RQ4), we will use PM$_{2.5}$ readings from EPA monitoring stations (parameter code 88101) that we can download using the EPA's Air Quality System (AQS) API~\cite{epa_aqs}. AQS was chosen over AirNow~\cite{epa_airnow} because AQS data has been quality-checked, while AirNow data is preliminary and designed for live updates. The stations have high accuracy but are limited in number. They are only used for testing and not for training.
+\subsection{Study Area and Time Period}
+We are focusing on the DFW area, approximately 32.3--33.5$^\circ$N and 97.8--96.3$^\circ$W. For now we plan to use data from 2018 to 2023 so we cover every season. At 1\,km, the DFW area is only about $140\times130$ pixels, so even with around 4{,}000 satellite passes, each one only gives a few $64\times64$ patches. To get enough training data, we will use patches from the whole h09v05 tile and save DFW only for testing.
+\subsection{Preparing the Data}
+We do not have a sharp version of a truly blurry satellite image, so we use a common trick: we make our own blurry inputs. We take the real 1\,km MAIAC map as the ``answer,'' and average blocks of $s\times s$ pixels to make the low-resolution input (Table~\ref{tab:data}). Our main goal is $s{=}4$ (4\,km to 1\,km). Then we cut the maps into patches (for example $64\times64$ pixels), throw out patches with too many missing pixels, and ignore any leftover missing pixels during training. We split the data by year (train on 2018--2021, validate on 2022, test on 2023) so the test data never overlaps with the training data. Because AOD values are skewed toward low numbers, we will log-transform or standardize them using statistics from the training years only. For RQ4, we take the model's value at each monitor's location and compare it to the monitor's average PM$_{2.5}$ around the time the satellite passed over. A model trained on our own blurred images might not work as well on real low-resolution satellite data~\cite{aybar2026sen2sr}.
+\section{Timeline}
+We work in weekly sprints from Oct 1 to Dec 1, with a Thursday check-in. Midterm (Oct 20) is RQ1 plus the written plan for consistency and uncertainty. After midterm we add the average-back constraint, then the confidence map and EPA $R^2$, and use late November for the report.
+\clearpage
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+\end{document}
