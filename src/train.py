@@ -6,6 +6,7 @@ How to run:
     python -m src.train --model unet          # or: edsr, unet, swinir
     python -m src.train --epochs 5            # fewer epochs
     python -m src.train --consistency         # turn on the average-back rule
+    python -m src.train --data real --epochs 300 --eval_every 25   # real DFW patches
 
 Uses the GPU automatically if PyTorch can see one (needs the CUDA version of torch).
 """
@@ -16,7 +17,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src import metrics
-from src.dataset import make_dummy_datasets
+from src.dataset import make_dummy_datasets, make_real_datasets
 from src.models.sr_net import MODELS, build_model, uncertainty_loss
 
 
@@ -71,6 +72,10 @@ def main():
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=2e-4, help="learning rate")
     parser.add_argument("--consistency", action="store_true", help="use the average-back rule")
+    parser.add_argument("--data", default="dummy", choices=["dummy", "real"],
+                        help="fake maps, or the real patches in --data_path")
+    parser.add_argument("--data_path", default="data/sprint2_patches.npz")
+    parser.add_argument("--eval_every", type=int, default=1, help="score the val set every N epochs")
     args = parser.parse_args()
 
     torch.manual_seed(0)  # same results every run
@@ -79,8 +84,11 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}")
 
-    # 1. Data (dummy for now; real patches will come from Track A)
-    train_set, val_set = make_dummy_datasets(args.scale)
+    # 1. Data: fake maps, or real patches (temporary date-order split until Track A's split by year)
+    if args.data == "real":
+        train_set, val_set, args.scale = make_real_datasets(args.data_path)
+    else:
+        train_set, val_set = make_dummy_datasets(args.scale)
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=64)
     print(f"train: {len(train_set)} patches, val: {len(val_set)} patches")
@@ -107,6 +115,8 @@ def main():
             total_loss += loss.item()
 
         # 4. Check how we're doing on the validation set
+        if epoch % args.eval_every != 0 and epoch != args.epochs:
+            continue
         s = evaluate(model, val_loader, val_set, args.scale, device)
         print(f"epoch {epoch:2d} | loss {total_loss / len(train_loader):.3f} | "
               f"RMSE {s['rmse']:.4f} (bicubic {s['rmse_bicubic']:.4f}) | "
@@ -118,7 +128,8 @@ def main():
 
     # 5. Save the trained model
     os.makedirs("checkpoints", exist_ok=True)
-    name = f"checkpoints/{args.model}{'_consistency' if args.consistency else ''}.pt"
+    name = (f"checkpoints/{args.model}{'_consistency' if args.consistency else ''}"
+            f"{'_real' if args.data == 'real' else ''}.pt")
     torch.save(model.state_dict(), name)
     print(f"saved model to {name}")
 
