@@ -3,7 +3,7 @@
 ## What this is in one sentence
 We give the model **one** real DFW patch and train it on that same patch over and over. If it can't learn to copy even one patch, something in the code is broken.
 
-This is a **sanity check**, not the real training. The real training script is `src/train.py`, which still uses fake data until Sprint 3.
+This is a **sanity check**, not the real training. The real training script is `src/train.py` (`--data real` for the real patches); see `docs/sprint3_rq1_README.md`.
 
 ---
 
@@ -16,7 +16,7 @@ python -W ignore -m src.overfit_one_patch
 
 - Use `-m src.overfit_one_patch`, not `src/overfit_one_patch.py`. Otherwise Python can't find the other project files.
 - `-W ignore` hides harmless library warnings.
-- It takes about 2 minutes on CPU.
+- It takes about 2 minutes on CPU, or about 10 seconds on a GPU (SwinIR is slower: about 2 minutes on a GPU).
 
 ### Options (all optional)
 | Option | What it does | Default |
@@ -24,7 +24,7 @@ python -W ignore -m src.overfit_one_patch
 | `--patch 43` | Train on a specific patch (0–143) | the most detailed, mostly cloud-free patch (40) |
 | `--model unet` | Which model to use: `edsr`, `unet` or `swinir` | `edsr` |
 | `--steps 500` | How many training steps | `2000` |
-| `--lr 5e-4` | Learning rate (how big each learning step is) | `1e-3` |
+| `--lr 5e-4` | Learning rate (how big each learning step is) | `2e-4` |
 | `--figure path.png` | Where to save the picture | `docs/diagrams/sprint2_overfit.png` |
 
 ---
@@ -102,7 +102,7 @@ Each step:
 
 Every 100 steps it prints a line like:
 ```
-step   500 | loss 1.40e-06 | RMSE 0.00008 (bicubic 0.02353) | PSNR 81.44 (bicubic 32.57) | ...
+step   500 | loss 4.09e-06 | RMSE 0.00011 (bicubic 0.02353) | PSNR 79.45 (bicubic 32.57) | ...
 ```
 In each pair, the first number is the **model** and the number in brackets is **bicubic**. Watch RMSE go down and PSNR go up.
 
@@ -135,18 +135,37 @@ It makes a 2-row figure and saves it with `fig.savefig(...)`. Each run overwrite
 
 ---
 
-## Our results (patch 40, EDSR, 2000 steps)
+## Our results (patch 40, 2000 steps, learning rate 2e-4)
 
-| | Bicubic | Model |
-|---|---|---|
-| RMSE (lower = better) | 0.0235 | 0.0000099 |
-| PSNR (higher = better) | 32.6 dB | ~100 dB |
-| SSIM (higher = better) | 0.798 | 1.000 |
-| Detail (1.0 = right) | 0.24 (too blurry) | 1.00 |
+All three models pass:
 
-**PASS.** Patch 43 (100% cloud-free) also passed: the model's error was 0.2% of bicubic's.
+| | Bicubic | EDSR | U-Net | SwinIR-light |
+|---|---|---|---|---|
+| Parameters | – | 1.52M | 1.93M | 0.92M |
+| RMSE (lower = better) | 0.0235 | 0.00017 | 0.00033 | 0.00040 |
+| Error vs bicubic | – | 0.7% | 1.4% | 1.7% |
+| PSNR gain over bicubic | – | +42.7 dB | +37.2 dB | +35.3 dB |
+| SSIM (higher = better) | 0.798 | 1.000 | 1.000 | 1.000 |
+| Detail (1.0 = right) | 0.24 (too blurry) | 1.00 | 1.00 | 1.00 |
+| Result | – | **PASS** | **PASS** | **PASS** |
+| Figure | – | `sprint2_overfit.png` | `sprint2_overfit_unet.png` | `sprint2_overfit_swinir.png` |
 
-The script always uses the same random seed, so you get the **same result every run**.
+The figures are in `docs/diagrams/`. To make them again:
+```
+python -W ignore -m src.overfit_one_patch
+python -W ignore -m src.overfit_one_patch --model unet --figure docs/diagrams/sprint2_overfit_unet.png
+python -W ignore -m src.overfit_one_patch --model swinir --figure docs/diagrams/sprint2_overfit_swinir.png
+```
+
+- **EDSR** learns fastest and most steadily.
+- **U-Net**'s error goes up and down during training, so its final number changes the most between runs (we've seen anywhere from 0.6% to 1.4% of bicubic's error). It passes every time.
+- **SwinIR** learns slowly but steadily. It was still improving at step 2000, and it's about 10× slower per step.
+
+Patch 43 (100% cloud-free) also passed with EDSR: 0.4% of bicubic's error.
+
+Learning rate is 2e-4. With 1e-3, EDSR got close to perfect, then blew up around step 1200 and failed.
+
+The script uses the same random seed every run, so results are **nearly** the same each time. On a GPU the last digits can change a little (e.g. RMSE 0.00016 vs 0.00018).
 
 ---
 

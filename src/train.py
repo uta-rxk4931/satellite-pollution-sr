@@ -1,7 +1,28 @@
 """
-Train the SR model and compare it to bicubic upscaling.
 
-How to run:
+Training the SR model and comparing it to a bicubic upscaling
+
+SR = super-resolution: turning a blurry low-res pollution map (4 km pixels) into a
+sharper high-res one (1 km pixels). Bicubic upscaling is the simple "smooth stretch"
+method; our model has to beat it to be worth anything.
+
+The big picture:
+    1. Load the data and split it into a TRAINING set (the model learns from it) and a
+       VALIDATION set (held back, so we can check the model on maps it has never seen).
+    2. Build the model and the optimizer (the thing that updates the model's weights).
+    3. Loop over the training data many times ("epochs"), nudging the weights each batch.
+    4. Every few epochs, score the model on the validation set and print the results.
+    5. Save the trained weights to a file.
+
+Words used below:
+    lr / hr      = low-res input map / high-res target map. Careful: args.lr is the
+                   LEARNING RATE, which has nothing to do with the low-res map!
+    mask         = 1 where a pixel has real data, 0 where it's missing (e.g. clouds)
+    AOD          = Aerosol Optical Depth, the pollution value stored in each pixel
+    batch        = a small group of patches the model processes together
+    epoch        = one full pass through all of the training data
+
+Commands to use:
     python -m src.train                       # EDSR, dummy data, 10 epochs
     python -m src.train --model unet          # or: edsr, unet, swinir
     python -m src.train --epochs 5            # fewer epochs
@@ -21,16 +42,23 @@ from src.dataset import make_dummy_datasets, make_real_datasets
 from src.models.sr_net import MODELS, build_model, uncertainty_loss
 
 
+
 def evaluate(model, loader, dataset, scale, device):
     """Run the model on the validation set and return the average scores."""
-    model.eval()
+    model.eval()  # evaluation mode (turns off training-only behaviour)
     # Collect every batch first, then score the whole validation set at once
     # (averaging per-batch RMSEs would not give exactly the overall RMSE)
     preds, bicubics, targets, masks, lrs, lr_masks, stds = [], [], [], [], [], [], []
 
+    # no_grad(): we're only measuring, not learning, so PyTorch doesn't need to track
+    # gradients. This saves a lot of memory and time.
     with torch.no_grad():
         for lr, lr_mask, hr, hr_mask in loader:
             lr, lr_mask, hr, hr_mask = lr.to(device), lr_mask.to(device), hr.to(device), hr_mask.to(device)
+
+            # The model returns two maps:
+            #   sharp   - its best guess at the high-res map
+            #   log_var - how UNSURE it is at each pixel (log of the variance; see below)
             sharp, log_var = model(lr, lr_mask)
 
             # Convert back to real AOD units before scoring (and move to CPU to save GPU memory)
@@ -40,24 +68,39 @@ def evaluate(model, loader, dataset, scale, device):
             masks.append(hr_mask.cpu())
             lrs.append(dataset.to_aod(lr).cpu())
             lr_masks.append(lr_mask.cpu())
+
+            # log_var -> standard deviation: std = sqrt(variance) = exp(0.5 * log_var).
+            # Multiplying by dataset.std converts it from normalized units to AOD units.
             stds.append((torch.exp(0.5 * log_var) * dataset.std).cpu())  # predicted uncertainty in AOD units
 
+    # torch.cat glues the per-batch lists into one big tensor each
     pred, bicubic, target, mask = torch.cat(preds), torch.cat(bicubics), torch.cat(targets), torch.cat(masks)
     lr, lr_mask, std = torch.cat(lrs), torch.cat(lr_masks), torch.cat(stds)
 
+    # Scores are grouped by the project's three research questions (RQ1-RQ3)
     return {
-        # RQ1
+        # RQ1: is the model more accurate than bicubic?
+        #   rmse - average error size (lower is better)
+        #   psnr - signal-to-noise in decibels (higher is better)
+        #   ssim - how similar the structure/shapes look, 1.0 = identical (higher is better)
         "rmse": metrics.rmse(pred, target, mask),
         "rmse_bicubic": metrics.rmse(bicubic, target, mask),
         "psnr": metrics.psnr(pred, target, mask),
         "psnr_bicubic": metrics.psnr(bicubic, target, mask),
         "ssim": metrics.ssim(pred, target, mask),
         "ssim_bicubic": metrics.ssim(bicubic, target, mask),
-        # RQ2
+        # RQ2: is the output physically believable?
+        #   consistency - if you average each scale x scale block of the prediction, how far is it
+        #                 from the original low-res pixel? (should be ~0)
+        #   detail      - fine detail compared to the real map (~1.0 ideal,
+        #                 <1 too smooth, >1 made-up noise)
         "consistency": metrics.consistency_error(pred, lr, lr_mask, scale),
         "detail": metrics.detail_ratio(pred, target, mask),
         "detail_bicubic": metrics.detail_ratio(bicubic, target, mask),
-        # RQ3
+        # RQ3: is the model honest about how unsure it is?
+        #   coverage90 - fraction of true values inside the model's 90% range (ideal 0.90)
+        #   cal_err    - average gap between promised and actual coverage over many levels (0 = perfect)
+        #   unc        - average predicted uncertainty (smaller is better, as long as coverage is right)
         "coverage90": metrics.coverage90(pred, std, target, mask),
         "cal_err": metrics.calibration_error(pred, std, target, mask),
         "unc": metrics.mean_uncertainty(std, mask),
@@ -65,6 +108,7 @@ def evaluate(model, loader, dataset, scale, device):
 
 
 def main():
+    # Command-line options, e.g. `--epochs 5`. Each has a default if you don't pass it.
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="edsr", choices=list(MODELS))
     parser.add_argument("--epochs", type=int, default=10)
@@ -86,38 +130,60 @@ def main():
 
     # 1. Data: fake maps, or real patches (temporary date-order split until Track A's split by year)
     if args.data == "real":
+        # The real data file says what its scale is, so it overrides --scale
         train_set, val_set, args.scale = make_real_datasets(args.data_path)
     else:
         train_set, val_set = make_dummy_datasets(args.scale)
+
+    # A DataLoader hands out the data in batches.
+    # shuffle=True mixes up the order every epoch so the model doesn't learn anything
+    # from the order of the patches. No need to shuffle the validation set.
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=64)
     print(f"train: {len(train_set)} patches, val: {len(val_set)} patches")
 
     # 2. Model and optimizer
+    # The "consistency" (average-back) rule forces each scale x scale block (4x4 by default) of the output to
+    # average to the low-res pixel it came from, so the model can't invent pollution.
     model = build_model(args.model, args.scale, args.consistency).to(device)
+
+    # The optimizer changes the model's weights after each batch.
+    # Adam is a popular default that adapts the step size for each weight automatically.
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    # Count the learnable numbers (weights) in the model, just for info
     num_params = sum(p.numel() for p in model.parameters())
     print(f"model: {args.model}, {num_params:,} parameters, consistency rule = {args.consistency}")
 
     # 3. Training loop
     for epoch in range(1, args.epochs + 1):
-        model.train()
+        model.train()  # put the model in training mode
         total_loss = 0
         for lr, lr_mask, hr, hr_mask in train_loader:
             # Move the batch to the same device as the model
             lr, lr_mask, hr, hr_mask = lr.to(device), lr_mask.to(device), hr.to(device), hr_mask.to(device)
+
+            # Forward pass: predict the high-res map and the uncertainty map
             sharp, log_var = model(lr, lr_mask)
+
+            # The loss rewards being accurate AND being honest about uncertainty:
+            # the model can "admit" it's unsure at a pixel (high log_var) to reduce the
+            # penalty for being wrong there, but it pays a small cost for saying "unsure".
+            # Cloudy pixels (mask = 0) are ignored. See uncertainty_loss in sr_net.py.
             loss = uncertainty_loss(sharp, log_var, hr, hr_mask)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
+            # The three standard PyTorch training lines:
+            optimizer.zero_grad()  # clear the gradients left over from the last batch
+            loss.backward()        # backpropagation: work out how each weight affects the loss
+            optimizer.step()       # nudge every weight a little in the direction that lowers the loss
+            total_loss += loss.item()  # .item() turns the 1-number tensor into a Python float
 
         # 4. Check how we're doing on the validation set
+        # Scoring is slow, so only do it every `eval_every` epochs (and always on the last one)
         if epoch % args.eval_every != 0 and epoch != args.epochs:
             continue
         s = evaluate(model, val_loader, val_set, args.scale, device)
+        # Note: this loss is the uncertainty loss, which can go negative. That's normal.
         print(f"epoch {epoch:2d} | loss {total_loss / len(train_loader):.3f} | "
               f"RMSE {s['rmse']:.4f} (bicubic {s['rmse_bicubic']:.4f}) | "
               f"PSNR {s['psnr']:.2f} (bicubic {s['psnr_bicubic']:.2f}) | "
@@ -127,6 +193,8 @@ def main():
               f"coverage90 {s['coverage90']:.2f} | cal_err {s['cal_err']:.3f} | unc {s['unc']:.4f}")
 
     # 5. Save the trained model
+    # state_dict() is a dictionary of all the learned weights. The file name says which
+    # model and settings were used, e.g. checkpoints/edsr_consistency_real.pt
     os.makedirs("checkpoints", exist_ok=True)
     name = (f"checkpoints/{args.model}{'_consistency' if args.consistency else ''}"
             f"{'_real' if args.data == 'real' else ''}.pt")
@@ -134,5 +202,6 @@ def main():
     print(f"saved model to {name}")
 
 
+# Only run main() when this file is run directly (not when it's imported by another file)
 if __name__ == "__main__":
     main()
