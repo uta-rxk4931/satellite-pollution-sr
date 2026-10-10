@@ -136,19 +136,14 @@ def main():
         train_set, val_set = make_dummy_datasets(args.scale)
 
     # A DataLoader hands out the data in batches.
-    # shuffle=True mixes up the order every epoch so the model doesn't learn anything
-    # from the order of the patches. No need to shuffle the validation set.
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=64)
     print(f"train: {len(train_set)} patches, val: {len(val_set)} patches")
 
     # 2. Model and optimizer
-    # The "consistency" (average-back) rule forces each scale x scale block (4x4 by default) of the output to
-    # average to the low-res pixel it came from, so the model can't invent pollution.
     model = build_model(args.model, args.scale, args.consistency).to(device)
 
     # The optimizer changes the model's weights after each batch.
-    # Adam is a popular default that adapts the step size for each weight automatically.
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     # Count the learnable numbers (weights) in the model, just for info
@@ -179,10 +174,10 @@ def main():
             total_loss += loss.item()  # .item() turns the 1-number tensor into a Python float
 
         # 4. Check how we're doing on the validation set
-        # Scoring is slow, so only do it every `eval_every` epochs (and always on the last one)
         if epoch % args.eval_every != 0 and epoch != args.epochs:
             continue
         s = evaluate(model, val_loader, val_set, args.scale, device)
+
         # Note: this loss is the uncertainty loss, which can go negative. That's normal.
         print(f"epoch {epoch:2d} | loss {total_loss / len(train_loader):.3f} | "
               f"RMSE {s['rmse']:.4f} (bicubic {s['rmse_bicubic']:.4f}) | "
@@ -202,6 +197,5 @@ def main():
     print(f"saved model to {name}")
 
 
-# Only run main() when this file is run directly (not when it's imported by another file)
 if __name__ == "__main__":
     main()

@@ -40,7 +40,7 @@ MIDDAY_HOURS = range(10, 15)  # 10:00, 11:00, 12:00, 13:00, 14:00
 
 
 def download(kind, year):
-    """Download one yearly EPA file (kind = 'hourly' or 'daily'), unless we already have it."""
+    
     os.makedirs(RAW_DIR, exist_ok=True)
     path = os.path.join(RAW_DIR, f"{kind}_88101_{year}.zip")
     if not os.path.exists(path):
@@ -50,7 +50,7 @@ def download(kind, year):
 
 
 def in_box(df):
-    """Keep only rows whose monitor is inside the DFW box."""
+    # Keep only rows whose monitor is inside the DFW box
     west, south, east, north = DFW_BOX
     return df[df["Longitude"].between(west, east) & df["Latitude"].between(south, north)]
 

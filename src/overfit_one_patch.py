@@ -1,9 +1,6 @@
 """
 Sprint 2 check: Can the Model learn (copy) ONE real DFW patch?
 
-If the training is correct, the model should be able to fit a single patch almost
-perfectly and beat bicubic by a alot. No confidence map and no average-back rule yet.
-
 Why do this? "Overfitting one example" is a classic sanity check in deep learning.
 A model that can't even memorize ONE example has a bug somewhere (wrong loss,
 wrong shapes, learning rate too high, data not lined up, ...). If it CAN memorize it,
@@ -37,12 +34,11 @@ from src.models.sr_net import MODELS, build_model
 
 
 def pick_patch(dataset, min_valid=0.95):
-    """The patch with the most variation (std) among the nearly cloud-free ones."""
-    # A flat, boring patch would be too easy (bicubic would already do well),
-    # so we look for the most "interesting" patch: the one whose values vary the most.
-    best, best_std = None, -1.0
+
+    best, best_std = None, -1.0 # Starting score is -1.0
+
     for i in range(len(dataset)):
-        # Each item in the dataset is (lr, lr_mask, hr, hr_mask). We only need the HR parts.
+        # We only need the hr and hr_mask
         _, _, hr, hr_mask = dataset[i]
 
         # hr_mask.mean() = fraction of pixels with real data. Skip patches with
@@ -52,6 +48,7 @@ def pick_patch(dataset, min_valid=0.95):
 
         # hr[hr_mask.bool()] keeps only the valid pixels, then .std() measures
         # how spread out their values are. .item() turns a 1-number tensor into a Python float.
+        # tensor reads as 0.8300 python reads as 0.83
         std = hr[hr_mask.bool()].std().item()
         if std > best_std:
             best, best_std = i, std
@@ -59,9 +56,7 @@ def pick_patch(dataset, min_valid=0.95):
 
 
 def score(sharp, lr, hr, hr_mask, dataset, scale):
-    """RMSE / PSNR / SSIM / detail for the model and for bicubic, in AOD units."""
-    # The model trains on NORMALIZED numbers (roughly mean 0, std 1) because neural
-    # nets learn better that way. to_aod() undoes that so scores are in real AOD units.
+
     pred = dataset.to_aod(sharp)                                    # model's output
     bicubic = dataset.to_aod(metrics.bicubic_upscale(lr, scale))   # baseline output
     target = dataset.to_aod(hr)                                     # the true answer
@@ -89,8 +84,7 @@ def save_figure(path, idx, model_name, s, lr, lr_mask, bicubic, pred, target, hr
     Bottom row: bicubic error vs model error (one shared error scale).
     Missing pixels are white.
     """
-    # matplotlib draws NaN ("not a number") pixels as blank/white, so we use NaN
-    # to hide the missing pixels.
+    # we use NaN to hide the missing pixels.
     nan = torch.tensor(float("nan"))
 
     # blank(x, m): wherever the mask is 0, replace the pixel with NaN.
@@ -159,17 +153,23 @@ def main():
 
     # Command-line options, e.g. `--steps 500`. Each has a default if you don't pass it.
     parser = argparse.ArgumentParser()
+
     parser.add_argument("--data", default="data/sprint2_patches.npz")
+
     parser.add_argument("--patch", type=int, default=None, help="patch index (default: most detailed)")
+
     parser.add_argument("--model", default="edsr", choices=list(MODELS))
+
     parser.add_argument("--steps", type=int, default=2000)
+
     parser.add_argument("--lr", type=float, default=2e-4, help="learning rate (1e-3 blows up near the end)")
+
     parser.add_argument("--figure", default="docs/diagrams/sprint2_overfit.png")
+
     args = parser.parse_args()
 
     torch.manual_seed(0)  # same results every run
 
-    # Use the GPU ("cuda") if one is available, since it's much faster; otherwise the CPU.
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}")
 
@@ -178,17 +178,15 @@ def main():
     idx = args.patch if args.patch is not None else pick_patch(dataset)
 
     # Models expect a BATCH of examples with shape (batch, channel, height, width).
-    # t[None] adds a batch dimension of size 1 at the front, e.g. (1, H, W) -> (1, 1, H, W).
-    # .to(device) moves the data onto the GPU/CPU, which must match where the model lives.
     lr, lr_mask, hr, hr_mask = (t[None].to(device) for t in dataset[idx])  # batch of 1
+
     print(f"{len(dataset)} patches in file, using patch {idx} "
           f"({hr_mask.mean().item():.0%} valid pixels)")
 
-    # 2. Model (no average-back rule; the uncertainty output is ignored for now)
+    # 2. Model 
     model = build_model(args.model, scale, use_consistency=False).to(device)
 
     # The optimizer is what actually changes the model's weights after each step.
-    # Adam is a popular default that adapts the step size for each weight automatically.
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     # Count the learnable numbers (weights) in the model, just for info
@@ -197,7 +195,7 @@ def main():
 
     # 3. Train on the same patch over and over
     for step in range(1, args.steps + 1):
-        model.train()  # put the model in training mode
+        model.train()  
 
         # Forward pass: low-res map in, predicted high-res ("sharp") map out.
         # The model also returns an uncertainty map, which we throw away (_) for this test.
@@ -205,18 +203,24 @@ def main():
 
         # Masked MSE (mean squared error): square each pixel's error, zero out the
         # missing pixels by multiplying by the mask, then average over the valid pixels only.
+        # A mask is a map the same size as the image that marks which pixels to trust. Each pixel is either:
+
+        # 1: there's a real measurement here, so use it
+        # 0: no data here (usually cloud, because the satellite can't see AOD through cloud), so ignore it
         loss = ((sharp - hr) ** 2 * hr_mask).sum() / hr_mask.sum()  # masked MSE
 
         # The three standard PyTorch training lines:
-        optimizer.zero_grad()  # clear the gradients left over from the last step
-        loss.backward()        # backpropagation: work out how each weight affects the loss
+        optimizer.zero_grad()  # clear the gradients left over from previous
+        loss.backward()        # backpropagation
+
         optimizer.step()       # nudge every weight a little in the direction that lowers the loss
 
         # Every 100 steps (and on step 1), print progress so we can watch it learn
         if step % 100 == 0 or step == 1:
             model.eval()  # evaluation mode (turns off training-only behaviour)
-            with torch.no_grad():  # no gradients needed just to look; saves memory and time
+            with torch.no_grad(): 
                 sharp, _ = model(lr, lr_mask)
+
             # .cpu() moves results back to the CPU for scoring and printing.
             # `s, *_ =` keeps the first return value (the scores) and ignores the rest.
             s, *_ = score(sharp.cpu(), lr.cpu(), hr.cpu(), hr_mask.cpu(), dataset, scale)

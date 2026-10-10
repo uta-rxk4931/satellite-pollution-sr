@@ -1,21 +1,11 @@
 """
 RQ4 (Sprint 5, Track A): does SHARPENED AOD track ground PM2.5 better than blurry AOD?
 
-Same idea as src/rq4_first_look.py, but with the SR models' output added:
-    aod_4km      blurry 4 km AOD at the monitor          (what SR starts from)
-    bicubic      4 km map enlarged with bicubic           (the simple baseline)
-    edsr / unet / swinir   4 km map sharpened by each trained model
-    aod_1km      the real 1 km AOD                        (what SR is aiming for)
-Each one is compared with EPA midday PM2.5 (R^2), for all days and within-day
-(see rq4_first_look.py for what "within-day" means).
-
-IMPORTANT, fair days only: the models trained on the 1 km maps of early June. On those
-days a model has already seen the right answer, so its output would look too good.
-We rebuild Rency's patch list (same rules as src/sprint2_patches.ipynb) to find out which
-day each training patch came from, and only score days with NO training patches.
-
-This is a CODE CHECK, not a result: one month leaves very few fair monitor-days.
-The real RQ4 numbers need the 2018-2023 data and the year split (test on 2023).
+This script checks whether sharpened AOD matches ground PM2.5 better than blurry AOD (RQ4). 
+It compares five versions of AOD at each EPA monitor against midday PM2.5: the original 
+4 km data, a bicubic upscale, the EDSR, U-Net, and SwinIR outputs, and the real 1 km data.
+It only scores days the models weren’t trained on, so they can’t look better than they are. 
+With just one month of data, this is a code check, not a final result.
 
 Needs: src/epa_pm25.py run first, and trained models in checkpoints/
 (python -m src.train --data real --model <name> --epochs 300).

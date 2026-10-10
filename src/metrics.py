@@ -41,6 +41,7 @@ def rmse(pred, target, mask):
 
 def psnr(pred, target, mask):
     mse = ((pred - target) ** 2 * mask).sum() / mask.sum()
+    
     return (10 * torch.log10(AOD_RANGE ** 2 / mse)).item()
 
 

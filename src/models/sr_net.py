@@ -1,15 +1,6 @@
 """
-The shared "shell" around every SR model (EDSR, U-Net, SwinIR-light).
-
-Every body takes (lr, lr_mask) and returns (detail, log_var) at high res.
-The shell then does the same thing for all of them, so the comparison is fair:
-
-    sharp = bicubic(lr) + detail          # the body only learns the missing detail
-    sharp = make_consistent(sharp, lr)    # optional average-back rule (RQ2)
-
-Usage:
-    model = build_model("edsr")   # or "unet", "swinir"
-    sharp, log_var = model(lr, lr_mask)
+All three super-resolution models (EDSR, U-Net, and SwinIR-light) 
+run inside the same wrapper so the comparison is fair.
 """
 import torch
 import torch.nn as nn
@@ -30,19 +21,22 @@ class SRModel(nn.Module):
         self.use_consistency = use_consistency
 
     def forward(self, lr, lr_mask):
-        detail, log_var = self.body(lr, lr_mask)
+        detail, log_var = self.body(lr, lr_mask) # EDSR, U-Net or SwinIR
 
         # Start from a plain bicubic upscale, so the network only has to learn
         # the missing detail on top of it (easier than learning everything)
         bicubic = F.interpolate(lr, scale_factor=self.scale, mode="bicubic", align_corners=False)
-        sharp = bicubic + detail
+
+        #F.interpolate is doing 16x16 -> 64x64 smooth
+
+        sharp = bicubic + detail # model adds the fine details
 
         if self.use_consistency:
             sharp = make_consistent(sharp, lr, lr_mask, self.scale)
 
         # log(variance) instead of variance, so it can never be negative.
         # Clamp it so exp() can't blow up.
-        return sharp, log_var.clamp(-10, 10)
+        return sharp, log_var.clamp(-10, 10) # sharp map + confidence
 
 
 def build_model(name="edsr", scale=4, use_consistency=False):
@@ -55,8 +49,6 @@ def make_consistent(sharp, lr, lr_mask, scale):
     Average-back rule: each scale x scale block of the sharp map should
     average to the low-res pixel it came from.
 
-    We work out how far off each block's average is and shift the whole block
-    by that amount. After this, averaging the sharp map gives back lr exactly.
     """
     block_avg = F.avg_pool2d(sharp, scale)            # average of each block
     error = (lr - block_avg) * lr_mask                # skip cloudy low-res pixels
@@ -76,5 +68,7 @@ def uncertainty_loss(sharp, log_var, target, mask):
     so cloudy pixels don't count.
     """
     loss = 0.5 * (torch.exp(-log_var) * (target - sharp) ** 2 + log_var)
+
+    # Loss = error ÷ uncertainty + a cost for being uncertain, averaged over non-cloud pixels. The model learns to say "unsure" only where it's actually wrong.
     return (loss * mask).sum() / mask.sum()
 
