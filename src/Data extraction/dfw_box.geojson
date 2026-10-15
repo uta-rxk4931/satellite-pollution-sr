@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "DFW"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-97.8, 32.3],
+            [-96.3, 32.3],
+            [-96.3, 33.5],
+            [-97.8, 33.5],
+            [-97.8, 32.3]
+          ]
+        ]
+      }
+    }
+  ]
+}
