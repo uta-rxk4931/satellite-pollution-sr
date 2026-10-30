@@ -28,17 +28,22 @@ Commands to use:
     python -m src.train --epochs 5            # fewer epochs
     python -m src.train --consistency         # turn on the average-back rule
     python -m src.train --data real --epochs 300 --eval_every 25   # real DFW patches
+    python -m src.train --data years --epochs 100 --eval_every 5   # year split: 2018-21 / 2022 / 2023
+
+With --data years, the epoch with the best 2022 (val) RMSE is kept, and the 2023 test
+year is scored only once, at the end.
 
 Uses the GPU automatically if PyTorch can see one (needs the CUDA version of torch).
 """
 import argparse
+import copy
 import os
 
 import torch
 from torch.utils.data import DataLoader
 
 from src import metrics
-from src.dataset import make_dummy_datasets, make_real_datasets
+from src.dataset import make_dummy_datasets, make_real_datasets, make_year_datasets
 from src.models.sr_net import MODELS, build_model, uncertainty_loss
 
 
@@ -107,6 +112,16 @@ def evaluate(model, loader, dataset, scale, device):
     }
 
 
+def print_scores(label, s):
+    """Print the scores from evaluate(): model first, bicubic in brackets."""
+    print(f"{label} | RMSE {s['rmse']:.4f} (bicubic {s['rmse_bicubic']:.4f}) | "
+          f"PSNR {s['psnr']:.2f} (bicubic {s['psnr_bicubic']:.2f}) | "
+          f"SSIM {s['ssim']:.3f} (bicubic {s['ssim_bicubic']:.3f})")
+    print(f"{' ' * len(label)} | consistency {s['consistency']:.1e} | "
+          f"detail {s['detail']:.2f} (bicubic {s['detail_bicubic']:.2f}) | "
+          f"coverage90 {s['coverage90']:.2f} | cal_err {s['cal_err']:.3f} | unc {s['unc']:.4f}")
+
+
 def main():
     # Command-line options, e.g. `--epochs 5`. Each has a default if you don't pass it.
     parser = argparse.ArgumentParser()
@@ -116,9 +131,10 @@ def main():
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=2e-4, help="learning rate")
     parser.add_argument("--consistency", action="store_true", help="use the average-back rule")
-    parser.add_argument("--data", default="dummy", choices=["dummy", "real"],
-                        help="fake maps, or the real patches in --data_path")
+    parser.add_argument("--data", default="dummy", choices=["dummy", "real", "years"],
+                        help="fake maps, the real patches in --data_path, or the year split in --split_dir")
     parser.add_argument("--data_path", default="data/sprint2_patches.npz")
+    parser.add_argument("--split_dir", default="data/split_data")
     parser.add_argument("--eval_every", type=int, default=1, help="score the val set every N epochs")
     args = parser.parse_args()
 
@@ -128,9 +144,12 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}")
 
-    # 1. Data: fake maps, or real patches (temporary date-order split until Track A's split by year)
-    if args.data == "real":
-        # The real data file says what its scale is, so it overrides --scale
+    # 1. Data: fake maps, the June 2023 patches (temporary split), or Track A's year split
+    # The real data files say what their scale is, so they override --scale
+    test_set = None  # only the year split has a test set
+    if args.data == "years":
+        train_set, val_set, test_set, args.scale = make_year_datasets(args.split_dir)
+    elif args.data == "real":
         train_set, val_set, args.scale = make_real_datasets(args.data_path)
     else:
         train_set, val_set = make_dummy_datasets(args.scale)
@@ -138,7 +157,8 @@ def main():
     # A DataLoader hands out the data in batches.
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_set, batch_size=64)
-    print(f"train: {len(train_set)} patches, val: {len(val_set)} patches")
+    print(f"train: {len(train_set)} patches, val: {len(val_set)} patches"
+          + (f", test: {len(test_set)} patches" if test_set is not None else ""))
 
     # 2. Model and optimizer
     model = build_model(args.model, args.scale, args.consistency).to(device)
@@ -151,6 +171,8 @@ def main():
     print(f"model: {args.model}, {num_params:,} parameters, consistency rule = {args.consistency}")
 
     # 3. Training loop
+    # For the year split, remember the weights from the epoch with the lowest val RMSE
+    best_rmse, best_epoch, best_weights = float("inf"), None, None
     for epoch in range(1, args.epochs + 1):
         model.train()  # put the model in training mode
         total_loss = 0
@@ -179,20 +201,25 @@ def main():
         s = evaluate(model, val_loader, val_set, args.scale, device)
 
         # Note: this loss is the uncertainty loss, which can go negative. That's normal.
-        print(f"epoch {epoch:2d} | loss {total_loss / len(train_loader):.3f} | "
-              f"RMSE {s['rmse']:.4f} (bicubic {s['rmse_bicubic']:.4f}) | "
-              f"PSNR {s['psnr']:.2f} (bicubic {s['psnr_bicubic']:.2f}) | "
-              f"SSIM {s['ssim']:.3f} (bicubic {s['ssim_bicubic']:.3f})")
-        print(f"         | consistency {s['consistency']:.1e} | "
-              f"detail {s['detail']:.2f} (bicubic {s['detail_bicubic']:.2f}) | "
-              f"coverage90 {s['coverage90']:.2f} | cal_err {s['cal_err']:.3f} | unc {s['unc']:.4f}")
+        print_scores(f"epoch {epoch:3d} | loss {total_loss / len(train_loader):.3f}", s)
+
+        if test_set is not None and s["rmse"] < best_rmse:
+            best_rmse, best_epoch = s["rmse"], epoch
+            best_weights = copy.deepcopy(model.state_dict())
+
+    # Year split: go back to the best epoch (picked on 2022 only), then score 2023 once
+    if test_set is not None:
+        model.load_state_dict(best_weights)
+        print(f"best epoch on 2022 val: {best_epoch} (RMSE {best_rmse:.4f})")
+        test_scores = evaluate(model, DataLoader(test_set, batch_size=64), test_set, args.scale, device)
+        print_scores("TEST 2023", test_scores)
 
     # 5. Save the trained model
     # state_dict() is a dictionary of all the learned weights. The file name says which
     # model and settings were used, e.g. checkpoints/edsr_consistency_real.pt
     os.makedirs("checkpoints", exist_ok=True)
-    name = (f"checkpoints/{args.model}{'_consistency' if args.consistency else ''}"
-            f"{'_real' if args.data == 'real' else ''}.pt")
+    suffix = {"real": "_real", "years": "_years"}.get(args.data, "")
+    name = f"checkpoints/{args.model}{'_consistency' if args.consistency else ''}{suffix}.pt"
     torch.save(model.state_dict(), name)
     print(f"saved model to {name}")
 

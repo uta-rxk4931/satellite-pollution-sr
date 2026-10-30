@@ -178,3 +178,22 @@ def make_real_datasets(path="data/sprint2_patches.npz", val_fraction=0.2):
     train = AODDataset(lr[:cut], hr[:cut], mean, std) # 112 patches
     val = AODDataset(lr[cut:], hr[cut:], mean, std) # 32 patches
     return train, val, scale
+
+
+# Year split: the real train / val / test sets (Track A, combine_and_split.py)
+def make_year_datasets(folder="data/split_data"):
+    """
+    Train 2018-21, val 2022, test 2023. Different years never share pixels, so no
+    overlap check is needed. Normalization uses Track A's train-only mean/std.
+    """
+    lr_train, hr_train, scale = read_real_patches(f"{folder}/train.npz")
+    lr_val, hr_val, _ = read_real_patches(f"{folder}/val.npz")
+    lr_test, hr_test, _ = read_real_patches(f"{folder}/test.npz")
+
+    stats = np.load(f"{folder}/train_stats.npz")
+    mean, std = float(stats["mean"]), float(stats["std"])
+
+    train = AODDataset(lr_train, hr_train, mean, std)
+    val = AODDataset(lr_val, hr_val, mean, std)
+    test = AODDataset(lr_test, hr_test, mean, std)
+    return train, val, test, scale

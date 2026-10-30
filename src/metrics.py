@@ -15,6 +15,8 @@ RQ3 - is the confidence map honest and useful?
   coverage      how often the true value is inside the model's X% range (should be ~X)
   calibration   average gap between promised and actual coverage (0 = perfect)
   mean_uncertainty  average predicted uncertainty (smaller = more useful, if still calibrated)
+  v_rmse        how far sigma^2 is from the actual squared error, pixel by pixel (lower = better)
+  sharpness     average width of the 90% range (narrower = more useful, if still calibrated)
 """
 from statistics import NormalDist
 
@@ -124,3 +126,19 @@ def mean_uncertainty(std, mask):
     so we also want this to be small.
     """
     return ((std * mask).sum() / mask.sum()).item()
+
+
+def v_rmse(pred, std, target, mask):
+    """
+    Variance RMSE (Zheng et al. 2026): how far the predicted variance sigma^2 is from the
+    actual squared error, pixel by pixel. The loss trains sigma^2 to estimate the expected
+    squared error, so smaller = sigma tracks the real error better.
+    """
+    gap = (std ** 2 - (pred - target) ** 2) ** 2
+    return torch.sqrt((gap * mask).sum() / mask.sum()).item()
+
+
+def sharpness(std, mask, level=0.9):
+    """Average width of the `level` range (2 * z * sigma), in AOD units. Narrower = more useful."""
+    z = NormalDist().inv_cdf((1 + level) / 2)
+    return ((2 * z * std * mask).sum() / mask.sum()).item()

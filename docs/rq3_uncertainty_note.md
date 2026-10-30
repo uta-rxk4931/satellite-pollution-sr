@@ -1,5 +1,9 @@
 # RQ3: why the uncertainty is hard to quantify (response to feedback)
 
+> **Update (year split):** the plan below has been carried out on the 2023 test year. RQ3 now has a two-part
+> wording, (a) does σ̂ point at the hard pixels and (b) a guaranteed 90% range, calibrated on 2022.
+> See [`rq3_uncertainty_results.md`](rq3_uncertainty_results.md). This note is kept as the June 2023 record.
+
 **Feedback received:** *"I like the idea and where the report is going, but the uncertainty may be hard to quantify. Be careful with that."*
 
 **Short answer:** we agree, and our first results back this up. On average the confidence map looks well calibrated, but that average hides three problems. The coverage number shifts with the model and with the training epoch while accuracy barely changes. The map is overconfident exactly where it matters most. And our validation data is too narrow to tell any of this apart reliably. We therefore plan to narrow RQ3 to a calibration check with clearly stated limits, rather than claim the confidence map measures "the uncertainty" of sharpened AOD.

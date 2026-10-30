@@ -12,6 +12,9 @@ Papers directly relevant to our satellite image super-resolution (SR) project. G
 - Zhang et al., "Uncertainty-guided Perturbation for Image Super-Resolution Diffusion Model" (CVPR 2025) — https://openaccess.thecvf.com/content/CVPR2025/html/Zhang_Uncertainty-guided_Perturbation_for_Image_Super-Resolution_Diffusion_Model_CVPR_2025_paper.html
 - "Diffusion-Powered Image Super-Resolution That You Can Actually Trust" (NeurIPS workshop) — https://neurips.cc/virtual/2024/105573
 - "BUFF: Bayesian Uncertainty Guided Diffusion Probabilistic Model for Single Image Super-Resolution" — https://arxiv.org/pdf/2504.03490
+- Zheng, Dewil, Arias, "Self-Supervised Uncertainty Estimation For Super-Resolution of Satellite Images" (2026) — https://arxiv.org/abs/2603.14074 (local copy: `uncertainity_pdfs/`). Shows the Gaussian NLL makes σ̂² the expected squared error per pixel; V-RMSE, coverage, sharpness, per-subgrid analysis. Basis for RQ3(a).
+- Belhasin, Romano, Freedman, Rivlin, Elad, "Principal Uncertainty Quantification with Spatial Correlation for Image Restoration Problems" (PUQ, TPAMI 2024) — https://arxiv.org/abs/2305.10124 (local copy: `uncertainity_pdfs/`). Conformal risk control: calibrate interval scale so P(miss rate ≤ α) ≥ 1−δ. Basis for RQ3(b).
+- Angelopoulos et al., "Image-to-Image Regression with Distribution-Free Uncertainty Quantification and Applications in Imaging" (im2im-uq, ICML 2022) — pixel-wise version of the same calibration, which is what RQ3(b) uses.
 
 ## Task-driven / downstream evaluation of SR (Phase 1 add-on)
 - Shermeyer & Van Etten, "The Effects of Super-Resolution on Object Detection Performance in Satellite Imagery"
