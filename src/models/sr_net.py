@@ -72,3 +72,17 @@ def uncertainty_loss(sharp, log_var, target, mask):
     # Loss = error ÷ uncertainty + a cost for being uncertain, averaged over non-cloud pixels. The model learns to say "unsure" only where it's actually wrong.
     return (loss * mask).sum() / mask.sum()
 
+
+def beta_nll_loss(sharp, log_var, target, mask, beta=0.5):
+    """
+    beta-NLL (Seitzer et al. 2022, "On the pitfalls of heteroscedastic uncertainty estimation").
+
+    Same loss as above, but each pixel is weighted by its own predicted variance ** beta
+    (detached, so the weight itself isn't trained). Plain NLL lets the model shrink sigma on
+    pixels it already fits well (e.g. memorized training pixels), which makes it overconfident
+    on new data. The weight evens that out. beta = 0 is plain NLL, beta = 1 behaves like MSE.
+    """
+    loss = 0.5 * (torch.exp(-log_var) * (target - sharp) ** 2 + log_var)
+    weight = torch.exp(log_var).detach() ** beta
+    return (loss * weight * mask).sum() / mask.sum()
+

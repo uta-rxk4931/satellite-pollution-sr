@@ -44,7 +44,7 @@ from torch.utils.data import DataLoader
 
 from src import metrics
 from src.dataset import make_dummy_datasets, make_real_datasets, make_year_datasets
-from src.models.sr_net import MODELS, build_model, uncertainty_loss
+from src.models.sr_net import MODELS, beta_nll_loss, build_model, uncertainty_loss
 
 
 
@@ -109,6 +109,8 @@ def evaluate(model, loader, dataset, scale, device):
         "coverage90": metrics.coverage90(pred, std, target, mask),
         "cal_err": metrics.calibration_error(pred, std, target, mask),
         "unc": metrics.mean_uncertainty(std, mask),
+        #   nll        - accuracy and uncertainty scored together (lower is better); --select nll uses it
+        "nll": metrics.gaussian_nll(pred, std, target, mask),
     }
 
 
@@ -136,9 +138,19 @@ def main():
     parser.add_argument("--data_path", default="data/sprint2_patches.npz")
     parser.add_argument("--split_dir", default="data/split_data")
     parser.add_argument("--eval_every", type=int, default=1, help="score the val set every N epochs")
+    # Options for the uncertainty experiments (defaults = the original behaviour)
+    parser.add_argument("--loss", default="nll", choices=["nll", "beta_nll"],
+                        help="plain Gaussian NLL, or beta-NLL (Seitzer et al. 2022)")
+    parser.add_argument("--beta", type=float, default=0.5, help="beta for --loss beta_nll")
+    parser.add_argument("--select", default="rmse", choices=["rmse", "nll"],
+                        help="year split: keep the epoch with the lowest 2022 RMSE, or the lowest 2022 NLL")
+    parser.add_argument("--clip", type=float, default=0, help="max gradient norm (0 = no clipping)")
+    parser.add_argument("--weight_decay", type=float, default=0, help="AdamW weight decay (0 = plain Adam)")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--name", help="save to checkpoints/methods/<name>.pt instead of the usual name")
     args = parser.parse_args()
 
-    torch.manual_seed(0)  # same results every run
+    torch.manual_seed(args.seed)  # same results every run (for the same seed)
 
     # Use the GPU if there is one, otherwise the CPU
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -164,15 +176,21 @@ def main():
     model = build_model(args.model, args.scale, args.consistency).to(device)
 
     # The optimizer changes the model's weights after each batch.
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    if args.weight_decay > 0:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     # Count the learnable numbers (weights) in the model, just for info
     num_params = sum(p.numel() for p in model.parameters())
     print(f"model: {args.model}, {num_params:,} parameters, consistency rule = {args.consistency}")
+    if args.name:
+        print(f"run: {args.name} | loss {args.loss}{f' (beta {args.beta})' if args.loss == 'beta_nll' else ''} | "
+              f"select by {args.select} | clip {args.clip} | weight decay {args.weight_decay} | seed {args.seed}")
 
     # 3. Training loop
-    # For the year split, remember the weights from the epoch with the lowest val RMSE
-    best_rmse, best_epoch, best_weights = float("inf"), None, None
+    # For the year split, remember the weights from the best epoch on 2022 (lowest RMSE or NLL)
+    best_score, best_epoch, best_weights = float("inf"), None, None
     for epoch in range(1, args.epochs + 1):
         model.train()  # put the model in training mode
         total_loss = 0
@@ -187,11 +205,16 @@ def main():
             # the model can "admit" it's unsure at a pixel (high log_var) to reduce the
             # penalty for being wrong there, but it pays a small cost for saying "unsure".
             # Cloudy pixels (mask = 0) are ignored. See uncertainty_loss in sr_net.py.
-            loss = uncertainty_loss(sharp, log_var, hr, hr_mask)
+            if args.loss == "beta_nll":
+                loss = beta_nll_loss(sharp, log_var, hr, hr_mask, args.beta)
+            else:
+                loss = uncertainty_loss(sharp, log_var, hr, hr_mask)
 
             # The three standard PyTorch training lines:
             optimizer.zero_grad()  # clear the gradients left over from the last batch
             loss.backward()        # backpropagation: work out how each weight affects the loss
+            if args.clip > 0:      # cap the size of one step, so one bad batch can't blow the model up
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             optimizer.step()       # nudge every weight a little in the direction that lowers the loss
             total_loss += loss.item()  # .item() turns the 1-number tensor into a Python float
 
@@ -203,23 +226,27 @@ def main():
         # Note: this loss is the uncertainty loss, which can go negative. That's normal.
         print_scores(f"epoch {epoch:3d} | loss {total_loss / len(train_loader):.3f}", s)
 
-        if test_set is not None and s["rmse"] < best_rmse:
-            best_rmse, best_epoch = s["rmse"], epoch
+        if args.name:
+            print(f"{' ' * 23} | val NLL {s['nll']:.4f}")
+        if test_set is not None and s[args.select] < best_score:
+            best_score, best_epoch = s[args.select], epoch
             best_weights = copy.deepcopy(model.state_dict())
 
     # Year split: go back to the best epoch (picked on 2022 only), then score 2023 once
     if test_set is not None:
         model.load_state_dict(best_weights)
-        print(f"best epoch on 2022 val: {best_epoch} (RMSE {best_rmse:.4f})")
+        print(f"best epoch on 2022 val: {best_epoch} ({args.select.upper()} {best_score:.4f})")
         test_scores = evaluate(model, DataLoader(test_set, batch_size=64), test_set, args.scale, device)
         print_scores("TEST 2023", test_scores)
 
     # 5. Save the trained model
     # state_dict() is a dictionary of all the learned weights. The file name says which
     # model and settings were used, e.g. checkpoints/edsr_consistency_real.pt
-    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("checkpoints/methods", exist_ok=True)
     suffix = {"real": "_real", "years": "_years"}.get(args.data, "")
     name = f"checkpoints/{args.model}{'_consistency' if args.consistency else ''}{suffix}.pt"
+    if args.name:  # experiments never overwrite the main checkpoints
+        name = f"checkpoints/methods/{args.name}.pt"
     torch.save(model.state_dict(), name)
     print(f"saved model to {name}")
 

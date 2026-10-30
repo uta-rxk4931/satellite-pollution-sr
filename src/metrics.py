@@ -18,6 +18,7 @@ RQ3 - is the confidence map honest and useful?
   v_rmse        how far sigma^2 is from the actual squared error, pixel by pixel (lower = better)
   sharpness     average width of the 90% range (narrower = more useful, if still calibrated)
 """
+import math
 from statistics import NormalDist
 
 import numpy as np
@@ -142,3 +143,14 @@ def sharpness(std, mask, level=0.9):
     """Average width of the `level` range (2 * z * sigma), in AOD units. Narrower = more useful."""
     z = NormalDist().inv_cdf((1 + level) / 2)
     return ((2 * z * std * mask).sum() / mask.sum()).item()
+
+
+def gaussian_nll(pred, std, target, mask):
+    """
+    Average Gaussian negative log-likelihood (AOD units, lower = better).
+    Scores accuracy AND uncertainty together: being wrong while claiming to be sure costs the most.
+    Used to pick the training epoch, so sigma can't shrink unchecked.
+    """
+    var = std ** 2
+    nll = 0.5 * ((target - pred) ** 2 / var + torch.log(var) + math.log(2 * math.pi))
+    return ((nll * mask).sum() / mask.sum()).item()

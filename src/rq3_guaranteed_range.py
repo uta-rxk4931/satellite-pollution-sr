@@ -70,6 +70,18 @@ def patch_risk(abs_err, scale, mask, grid):
     return outside / valid.sum(dim=1, keepdim=True)
 
 
+def hard_groups(ds):
+    """Pixel masks for clear patches, cloud edges and the haziest 10% of patches."""
+    mask = ds.hr_mask
+    aod = ds.to_aod(ds.hr)
+    mean_aod = (aod * mask).sum(dim=(1, 2, 3)) / mask.sum(dim=(1, 2, 3))
+    return {
+        "clear patches": (mask.mean(dim=(1, 2, 3)) == 1)[:, None, None, None] * mask,
+        "cloud edges": (F.max_pool2d(1 - mask, 3, stride=1, padding=1) > 0).float() * mask,
+        "high-AOD patches (top 10%)": (mean_aod >= torch.quantile(mean_aod, 0.9))[:, None, None, None] * mask,
+    }
+
+
 def calibrate(risk_per_patch, grid):
     """Smallest grid value whose average risk + Hoeffding margin <= ALPHA."""
     n = risk_per_patch.shape[0]
@@ -87,15 +99,7 @@ def main():
     print(f"target: <= {ALPHA:.0%} misses, guaranteed with {1 - DELTA:.0%} confidence "
           f"(safety margin {margin:.3f}, so 2022 must be <= {ALPHA - margin:.1%})\n")
 
-    # 2023 groups for "where does it fail?"
-    t_mask = test.hr_mask
-    t_aod = test.to_aod(test.hr)
-    mean_aod = (t_aod * t_mask).sum(dim=(1, 2, 3)) / t_mask.sum(dim=(1, 2, 3))
-    groups = {
-        "clear patches": (t_mask.mean(dim=(1, 2, 3)) == 1)[:, None, None, None] * t_mask,
-        "cloud edges": (F.max_pool2d(1 - t_mask, 3, stride=1, padding=1) > 0).float() * t_mask,
-        "high-AOD patches (top 10%)": (mean_aod >= torch.quantile(mean_aod, 0.9))[:, None, None, None] * t_mask,
-    }
+    groups = hard_groups(test)  # 2023 groups for "where does it fail?"
 
     results = {}
     for arch, rule in RUNS:

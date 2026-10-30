@@ -132,6 +132,19 @@ Add `--consistency` to each for the average-back rule. That's 6 runs in total.
 - Left: on average, the σ̂ range is about as wide as a constant-width range with the same guarantee.
 - Right: the difference is **where the misses land**. The constant range misses **17–20%** of pixels at cloud edges and on hazy days. The σ̂ range keeps those at **8–13%**, because it's narrow on easy pixels and wider on hard ones. That's the evidence that σ̂ is real uncertainty, not an average error.
 
+**Fixing the overconfidence** (full details in `rq3_methods_comparison.md`). The cause: σ̂ keeps shrinking after accuracy on 2022 has stopped improving, and we picked the epoch by RMSE only. We tested four fixes against these original runs (kept as the baseline B0):
+
+| Model | B0 (original) coverage90 | M1: epoch by 2022 NLL + clipping | M4: ensemble of 5 | M4 RMSE (B0) |
+|---|---|---|---|---|
+| U-Net | 0.83 | 0.85 | **0.92** | **0.0106** (0.0110) |
+| EDSR | 0.91 | 0.84 | **0.89** | **0.0106** (0.0116) |
+| SwinIR-light | 0.79 | **0.87** | – | 0.0107 (B0/M1) |
+
+- **Best overall: the deep ensemble (M4).** It is more accurate, the most honest, and gives the narrowest guaranteed range (λ̂ 1.8–1.9 instead of 2.3).
+- **Best cheap fix: pick the epoch by 2022 NLL (M1).** It also stopped the EDSR blow-up.
+- **β-NLL and weight decay:** their effect is within seed noise.
+- **Cloud-edge misses** stay at about 11% for every method, so the λ̂ calibration is still needed.
+
 ### Caveat
 Each model was trained **once, with one seed**. Small gaps (U-Net vs SwinIR, rule vs no rule for SwinIR) could be run-to-run noise. The gap to bicubic is consistent across all six runs, so that part is solid.
 
@@ -280,7 +293,8 @@ More detail and the earlier June checks are in `rq3_uncertainty_note.md`.
 ## What's next
 - [x] **RQ3 fix:** a guaranteed range, calibrated on 2022 (`rq3_uncertainty_results.md`, part b). Every model ≤ 7.2% misses on 2023.
 - [x] **RQ3 figures on 2023:** calibration curve, error vs σ̂, 4×4 positions, and the per-patch images (`rq3_uncertainty_results.md`, part a).
-- [ ] **Seeds:** retrain the two best models with 2–3 seeds, to see whether the small gaps are real.
+- [x] **Overconfidence fixes:** compared NLL early stopping, β-NLL, weight decay and a 5-seed ensemble (`rq3_methods_comparison.md`). The ensemble is best; NLL early stopping is the cheap fix.
+- [ ] **Seeds:** U-Net and EDSR now have 5 seeds each (M1). SwinIR still has one, so the small model gaps in RQ1 aren't settled yet.
 - [ ] **RQ4:** rerun the EPA comparison on 2023. This needs Rency's daily maps with coordinates.
 - [ ] **Ask Rency:** add `date` and patch `(row, col)` to the patch files, for per-day error bars and monitor matching.
 - [ ] **main.tex:** training is on the DFW year patches (not the whole tile), the data is standardized (not log-transformed), and RQ3 uses the new two-part wording (agree with Rency first).
