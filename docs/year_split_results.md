@@ -93,6 +93,21 @@ Add `--consistency` to each for the average-back rule. That's 6 runs in total.
 - Every best epoch is well before 200 (40–140), so 200 epochs is enough.
 - The gain is about 3× larger than on the June split (−15% vs −5%). That's because there's about 40× more training data.
 
+**With 5 seeds per model (M1 recipe: 150 epochs, NLL, epoch picked by 2022 NLL, gradient clip 1.0), scored on 2023:**
+
+| Model (5 seeds, M1) | RMSE ↓ | PSNR ↑ | SSIM ↑ | Detail ratio | Coverage90 (0.90) | Cal. error ↓ |
+|---|---|---|---|---|---|---|
+| Bicubic | 0.0126 | 37.97 | 0.927 | 0.49 | – | – |
+| U-Net | 0.0110 ± <0.0001 | 39.13 ± 0.03 | 0.948 ± 0.001 | 0.70 ± 0.01 | 0.878 ± 0.018 | 0.015 ± 0.011 |
+| EDSR | 0.0110 ± <0.0001 | 39.20 ± 0.03 | 0.948 ± 0.001 | 0.69 ± 0.01 | 0.852 ± 0.011 | 0.030 ± 0.010 |
+| SwinIR-light | **0.0107 ± <0.0001** | **39.40 ± 0.02** | **0.951 ± <0.001** | **0.72 ± 0.01** | 0.874 ± 0.017 | 0.018 ± 0.009 |
+
+- **SwinIR-light really is the best, not a lucky run.** All 5 of its seeds have RMSE 0.0107. Its PSNR lead over EDSR (+0.20 dB) is about 7× the seed-to-seed spread (±0.03).
+- **U-Net and EDSR are tied on accuracy.**
+- **Every seed of every model beats bicubic** by about 13–15% in RMSE.
+- **About the ± values:** std is the sample std over seeds 0–4. The logs print RMSE to 4 decimals, so "< 0.0001" means all 5 seeds printed the same value.
+- **Training settings:** SwinIR seed 0 was evaluated every 5 epochs and seeds 1–4 every 10. U-Net and EDSR used every 5 for all seeds.
+
 ### RQ2: does the average-back rule reduce made-up detail without smoothing the map?
 **It keeps the output faithful to the input at no cost.**
 - Consistency error drops from 6e-04–2e-03 to **8.7e-09**: the sharp map now averages back to the blurry input almost exactly. (The rule is a hard correction applied after the network, so this is by construction.)
@@ -146,7 +161,7 @@ Add `--consistency` to each for the average-back rule. That's 6 runs in total.
 - **Cloud-edge misses** stay at about 11% for every method, so the λ̂ calibration is still needed.
 
 ### Caveat
-Each model was trained **once, with one seed**. Small gaps (U-Net vs SwinIR, rule vs no rule for SwinIR) could be run-to-run noise. The gap to bicubic is consistent across all six runs, so that part is solid.
+The original six runs (B0) were each trained **once, with one seed**, so small gaps between them (e.g. rule vs no rule for SwinIR) could be run-to-run noise. The 5-seed M1 runs in the RQ1 table above settle the model ranking: SwinIR-light is best, and U-Net and EDSR are tied. The rule-vs-no-rule comparison (RQ2) still has only one seed each.
 
 ---
 
