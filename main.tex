@@ -468,6 +468,8 @@ Deep SR reliably sharpens 4\,km AOD toward the 1\,km MAIAC map, and the average-
 \section{Conclusion}
 On a strict year split, all three architectures beat bicubic by 8--15\% in RMSE, with SwinIR-light best across five seeds. The average-back constraint makes the output exactly consistent with the input at no cost in accuracy or detail. The predicted uncertainty points at the pixels the model gets wrong, and after one scale factor is calibrated on 2022, the resulting range contains the true value for over 90\% of 2023 pixels while placing its width where it is needed. Selecting the checkpoint by NLL removes most of the overconfidence for free, and a five-model ensemble gives the most accurate maps with honest to slightly cautious uncertainty.
 
+% References start on their own, last page (\clearpage also places any remaining figures/tables first)
+\clearpage
 \bibliographystyle{IEEEtran}
 \bibliography{refs}
 \end{document}
